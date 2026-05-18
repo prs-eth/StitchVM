@@ -1,0 +1,20 @@
+# Local-only material that should not be in the code repo
+projectpage/
+paper_extracted/
+*.zip
+StitchVM.pdf
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+.claude/
+
+# Python / build
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+.ipynb_checkpoints/
