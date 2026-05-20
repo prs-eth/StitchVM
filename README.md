@@ -22,7 +22,7 @@
 
 [**Project page**](https://gohyojun15.github.io/StitchVM/) &nbsp;|&nbsp;
 [**Paper (PDF)**](https://gohyojun15.github.io/StitchVM/static/stitchvm.pdf) &nbsp;|&nbsp;
-**arXiv** (coming soon)
+[**arXiv**](https://arxiv.org/abs/2605.19804) 
 
 </div>
 
