@@ -22,7 +22,7 @@
 
 [**Project page**](https://gohyojun15.github.io/StitchVM/) &nbsp;|&nbsp;
 [**Paper (PDF)**](https://gohyojun15.github.io/StitchVM/static/stitchvm.pdf) &nbsp;|&nbsp;
-[**arXiv**](https://arxiv.org/abs/2605.19804) 
+[**arXiv**](https://arxiv.org/abs/2605.19804)
 
 </div>
 
@@ -50,7 +50,7 @@ See the **[project page](https://gohyojun15.github.io/StitchVM/)** for the full 
     author  = {Go, Hyojun and Chung, Hyungjin and Truong, Prune and Bhat, Goutam
                and Mi, Li and An, Zhaochong and Zhao, Zixiang and Narnhofer, Dominik
                and Belongie, Serge and Tombari, Federico and Schindler, Konrad},
-    journal = {arXiv preprint},
+    journal = {arXiv preprint arXiv:2605.19804},
     year    = {2026}
 }
 ```
