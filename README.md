@@ -38,6 +38,12 @@ See the **[project page](https://gohyojun15.github.io/StitchVM/)** for the full 
 
 ---
 
+## Release plan
+
+> If the community focuses on this project, we will release other stitched models. 
+
+---
+
 ## 🚧 Code release
 
 > The code release is **in preparation**. Star or watch this repository to be notified.
