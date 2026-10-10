@@ -1,0 +1,28 @@
+StitchVM — Stitched Value Models for Diffusion Alignment
+Copyright 2026 The StitchVM Authors
+
+This product includes software developed by The StitchVM Authors and
+is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Paper: "Stitched Value Model for Diffusion Alignment" (arXiv:2605.19804).
+
+--------------------------------------------------------------------------------
+THIRD-PARTY COMPONENTS
+
+This repository vendors or adapts code from the following third-party projects.
+Their original licenses and copyrights apply to the corresponding files.
+
+1. HPSv2 / open_clip (mlfoundations)
+   Files: external_repos/HPSv2/** (a fork of open_clip used for the HPSv2
+   image encoder)
+   open_clip Copyright (c) 2012-2021 the open_clip authors.
+   HPSv2 Copyright the HPSv2 authors.
+   License: MIT (open_clip) / see external_repos/HPSv2/LICENSE.
+
+2. HPDv2 dataset loader (Hugging Face Hub: ymhao/HPDv2)
+   Adapted in data_processing/ for dataset preparation.
+   License: Apache License 2.0.
+
+Reward models (HPSv2, Aesthetic, DFN-CLIP, CLIP) and base
+diffusion models (Stable Diffusion 3.5, FLUX.1-dev) are downloaded from their
+original sources at runtime and remain under their respective licenses.

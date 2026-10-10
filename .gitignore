@@ -1,20 +1,43 @@
-# Local-only material that should not be in the code repo
-projectpage/
-paper_extracted/
-*.zip
-StitchVM.pdf
+# Python and build outputs
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+.venv*/
+venv/
+.coverage
+htmlcov/
 
-# Editors / OS
+# Local editor settings and credentials
 .DS_Store
 .idea/
 .vscode/
-.claude/
+*.swp
+*.swo
+.env
+.env.*
+*.pem
+*.key
 
-# Python / build
-__pycache__/
-*.pyc
-*.pyo
-*.egg-info/
-build/
-dist/
-.ipynb_checkpoints/
+# Data, model weights, caches, and generated results
+/data/
+/dataset/
+/init/
+/outputs/
+/results/
+/docs/results/
+/weights/
+/reward_ckpts/
+/checkpoints/
+.cache/
+/logs/
+/wandb/
+*.log
+*.pt
+*.pth
+*.ckpt
+*.safetensors

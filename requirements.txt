@@ -1,0 +1,30 @@
+# PyTorch 2.7 is required. Install it first as described in README.md.
+torch>=2.7,<2.8
+
+# Core deep learning
+transformers==5.3.0
+diffusers==0.37.1
+accelerate==1.13.0
+peft==0.19.1
+huggingface-hub==1.13.0
+tokenizers==0.22.2
+sentencepiece==0.2.1
+einops==0.8.1
+
+# Numerics
+numpy==1.26.4
+
+# Imaging
+Pillow==11.1.0
+ftfy==6.3.1
+open_clip_torch==2.32.0  # DFN-CLIP (apple/DFN5B-CLIP-ViT-H-14-378) loader
+
+# Logging / config / progress
+loguru==0.7.3
+tqdm==4.67.1
+
+# Serialization
+safetensors==0.5.3
+
+# Downloads
+requests==2.32.3
