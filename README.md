@@ -55,6 +55,17 @@ initializations are also not included. The guides below explain how to generate
 initializations and train models locally. The download helper fetches the
 original pretrained diffusion and reward models needed by these workflows.
 
+## TODO
+
+- [ ] Release pretrained StitchVM checkpoints.
+- [ ] Add support for additional diffusion backbones and reward models.
+- [ ] Release inference-time alignment code.
+
+Want to use StitchVM with a particular diffusion backbone and reward model?
+Submit a [model integration request](https://docs.google.com/forms/d/e/1FAIpQLSebA4Ac9-AQuUCbN_wkYNt6Qc0ZImG06DvFjyw1_vBsC28Wjw/viewform)
+with your model combination, use case, and where you would like help.
+
+
 ## Training recipe and relation to the paper
 
 **The training recipe in this repository differs from the paper.** We introduced
