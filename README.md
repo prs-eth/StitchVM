@@ -50,10 +50,31 @@ The code supports stitching-layer search and value-model distillation for all
 12 combinations of **SD3.5 Medium, SD3.5 Large, and FLUX.1-dev** with
 **HPSv2, CLIP, Aesthetic, and DFN-CLIP** reward encoders.
 
-**TODO: StitchVM checkpoints have not been released.** Precomputed stitching
-initializations are also not included. The guides below explain how to generate
-initializations and train models locally. The download helper fetches the
-original pretrained diffusion and reward models needed by these workflows.
+### Pretrained checkpoints
+
+Pretrained StitchVM EMA checkpoints are available on
+[Hugging Face](https://huggingface.co/HJGO/stitchvm) for all 12 supported
+backbone–reward combinations.
+
+Layer pairs follow the training configurations and denote
+**DiT → reward-encoder block outputs**, indexed from 1.
+
+| Diffusion backbone | Reward model | DiT → Encoder | EMA checkpoint |
+|---|---|:---:|:---:|
+| SD3.5 Medium | HPSv2 | 3 → 1 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/hpsv2_sd3.5_medium/model_trainables_ema.pt) |
+| SD3.5 Medium | CLIP | 3 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/clip_sd3.5_medium/model_trainables_ema.pt) |
+| SD3.5 Medium | Aesthetic | 3 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_aesthetic_sd3/checkpoints/epoch_0005/model_trainables_ema.pt) |
+| SD3.5 Medium | DFN-CLIP | 5 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_dfn_clip_sd3/checkpoints/epoch_0005/model_trainables_ema.pt) |
+| SD3.5 Large | HPSv2 | 13 → 1 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_hpsv2_sd3_large/checkpoints/epoch_0005/model_trainables_ema.pt) |
+| SD3.5 Large | CLIP | 12 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_clip_sd3_large/checkpoints/epoch_0005/model_trainables_ema.pt) |
+| SD3.5 Large | Aesthetic | 12 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_aesthetic_sd3_large/checkpoints/epoch_0005/model_trainables_ema.pt) |
+| SD3.5 Large | DFN-CLIP | 15 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_dfn_clip_sd3_large/checkpoints/epoch_0005/model_trainables_ema.pt) |
+| FLUX.1-dev | HPSv2 | 9 → 1 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_hpsv2_flux/checkpoints/epoch_0005/model_trainables_ema.pt) |
+| FLUX.1-dev | CLIP | 9 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_clip_flux/checkpoints/epoch_0005/model_trainables_ema.pt) |
+| FLUX.1-dev | Aesthetic | 9 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_aesthetic_flux/checkpoints/epoch_0005/model_trainables_ema.pt) |
+| FLUX.1-dev | DFN-CLIP | 9 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_dfn_clip_flux/checkpoints/epoch_0005/model_trainables_ema.pt) |
+
+
 
 ## TODO
 
@@ -163,31 +184,6 @@ peak noise levels, unstitched baselines, and all supplied metric breakdowns.
 The retrieval breakdown covers selected noise levels. **Checkpoints are not yet
 released.** Standalone intrinsic-evaluation and diffusion-alignment launchers
 are not included in this code release.
-
-### Pretrained checkpoints
-
-Pretrained StitchVM EMA checkpoints are available on
-[Hugging Face](https://huggingface.co/HJGO/stitchvm) for all 12 supported
-backbone–reward combinations.
-
-Layer pairs follow the training configurations and denote
-**DiT → reward-encoder block outputs**, indexed from 1.
-
-| Diffusion backbone | Reward model | DiT → Encoder | EMA checkpoint |
-|---|---|:---:|:---:|
-| SD3.5 Medium | HPSv2 | 3 → 1 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/hpsv2_sd3.5_medium/model_trainables_ema.pt) |
-| SD3.5 Medium | CLIP | 3 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/clip_sd3.5_medium/model_trainables_ema.pt) |
-| SD3.5 Medium | Aesthetic | 3 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_aesthetic_sd3/checkpoints/epoch_0005/model_trainables_ema.pt) |
-| SD3.5 Medium | DFN-CLIP | 5 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_dfn_clip_sd3/checkpoints/epoch_0005/model_trainables_ema.pt) |
-| SD3.5 Large | HPSv2 | 13 → 1 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_hpsv2_sd3_large/checkpoints/epoch_0005/model_trainables_ema.pt) |
-| SD3.5 Large | CLIP | 12 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_clip_sd3_large/checkpoints/epoch_0005/model_trainables_ema.pt) |
-| SD3.5 Large | Aesthetic | 12 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_aesthetic_sd3_large/checkpoints/epoch_0005/model_trainables_ema.pt) |
-| SD3.5 Large | DFN-CLIP | 15 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_dfn_clip_sd3_large/checkpoints/epoch_0005/model_trainables_ema.pt) |
-| FLUX.1-dev | HPSv2 | 9 → 1 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_hpsv2_flux/checkpoints/epoch_0005/model_trainables_ema.pt) |
-| FLUX.1-dev | CLIP | 9 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_clip_flux/checkpoints/epoch_0005/model_trainables_ema.pt) |
-| FLUX.1-dev | Aesthetic | 9 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_aesthetic_flux/checkpoints/epoch_0005/model_trainables_ema.pt) |
-| FLUX.1-dev | DFN-CLIP | 9 → 2 | [Download](https://huggingface.co/HJGO/stitchvm/resolve/main/stitchvm_dfn_clip_flux/checkpoints/epoch_0005/model_trainables_ema.pt) |
-
 
 ## Citation
 
