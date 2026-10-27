@@ -7,6 +7,7 @@ configure_training_recipe() {
   local loss_type=mse
 
   TRAIN_LEARNING_RATE=5e-5
+  TRAIN_ENV=()
   case "$backbone" in
     sd3.5) ;;
     sd3.5_large) TRAIN_LEARNING_RATE=1e-5 ;;
@@ -22,6 +23,16 @@ configure_training_recipe() {
       default_global_batch=128
       default_micro_batch=8
       buckets=(512 768 1024)
+      ;;
+    hpsv3|qwen35)
+      # Vision-language reward heads (SD3.5 Medium only): post-merger token MSE,
+      # global batch 256 at micro-batch 8. expandable_segments avoids the
+      # allocator fragmentation seen at the 1024² buckets.
+      if [[ "$backbone" != sd3.5 ]]; then
+        echo "$reward recipes are defined for SD3.5 Medium only" >&2; return 2
+      fi
+      default_micro_batch=8
+      TRAIN_ENV=(env "PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}")
       ;;
     *) echo "Unknown training reward encoder: $reward" >&2; return 2 ;;
   esac

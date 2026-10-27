@@ -50,8 +50,22 @@ def add_model_selection_args(
         "--feedforward_model",
         type=str,
         default="clip",
-        choices=["clip", "aesthetic", "hpsv2", "dfn_clip"],
-        help="Reward-model encoder used as the StitchVM tail.",
+        choices=["clip", "aesthetic", "hpsv2", "dfn_clip", "hpsv3", "qwen35"],
+        help="Reward-model encoder used as the StitchVM tail. hpsv3 stitches the "
+        "Qwen2-VL vision branch of HPSv3; qwen35 stitches the vision branch of a "
+        "UnifiedReward-2.0 Qwen3.5 checkpoint (--qwen35_checkpoint). Their language "
+        "branches are not loaded for search or distillation.",
+    )
+    g.add_argument(
+        "--qwen35_checkpoint",
+        type=str,
+        default=None,
+        help=(
+            "Local directory of a UnifiedReward-2.0 Qwen3.5 checkpoint (config.json, "
+            "processor_config.json, safetensors, PINNED_REVISION written by "
+            "scripts/download_weights.py). Every vision and processor setting is read "
+            "from it. Required when --feedforward_model=qwen35."
+        ),
     )
     g.add_argument(
         "--diffusion_model",
@@ -88,6 +102,15 @@ def add_model_selection_args(
             "Directory containing HPSv2 checkpoints "
             "(open_clip_pytorch_model.bin + HPS_v2.1_compressed.pt). "
             "Required when --feedforward_model=hpsv2."
+        ),
+    )
+    g.add_argument(
+        "--hpsv3_checkpoint",
+        type=str,
+        default=None,
+        help=(
+            "Path to HPSv3.safetensors. Default: MizzenAI/HPSv3 from the Hub at the "
+            "pinned revision. Used when --feedforward_model=hpsv3."
         ),
     )
     g.add_argument(
@@ -248,6 +271,15 @@ def add_training_data_args(parser: argparse.ArgumentParser) -> argparse.Argument
         "by 16. Overrides --width/--height. Reward inputs retain their native "
         "size. When omitted, uses fixed --width x --height.",
     )
+    g.add_argument(
+        "--exclude_image_list",
+        type=str,
+        default=None,
+        help="Text file of training images to drop, one path per line, relative to the "
+        "dataset root (e.g. train/00020324.jpg for HPDv2) or absolute. Used by the "
+        "UnifiedReward-2.0 Qwen3.5 recipes to remove near-duplicates of VL-RewardBench "
+        "test images. Default: none.",
+    )
 
     return parser
 
@@ -261,7 +293,8 @@ def additional_stitching_dataset_args(
         type=int,
         required=True,
         help="Reward-model input width in pixels: 224 for HPSv2/Aesthetic, "
-        "336 for CLIP-L/14-336, 378 for DFN-CLIP.",
+        "336 for CLIP-L/14-336, 378 for DFN-CLIP, 448 for HPSv3. qwen35 reads "
+        "the VAE image at its processor size instead; its recipes pass 512.",
     )
     g.add_argument(
         "--feedforward_height",
@@ -299,7 +332,7 @@ def find_layer_stitching_argument() -> argparse.ArgumentParser:
         metavar="CONV_SPEC",
         help="Candidate stitching-conv spec, e.g. conv2d_k1x1_o1280_s1x1_p0x0 "
         "(o must match the reward head's hidden size: 1024 for CLIP-L, "
-        "1280 for HPSv2/DFN ViT-H).",
+        "1280 for HPSv2/DFN ViT-H and HPSv3; the vision hidden size for qwen35).",
     )
 
     add_model_selection_args(parser)

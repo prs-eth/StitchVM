@@ -122,6 +122,49 @@ def hpsv2():
     _file("laion/CLIP-ViT-H-14-laion2B-s32B-b79K", "open_clip_pytorch_model.bin", dest)
 
 
+# Extension reward models, pinned to the revisions used for the documented runs.
+_HPSV3 = ("MizzenAI/HPSv3", "4f81e3e09edd82fe3c5f636444c721b592a735ca")
+_QWEN2VL_7B = ("Qwen/Qwen2-VL-7B-Instruct", "eed13092ef92e448dd6875b2a00151bd3f7db0ac")
+_UNIFIEDREWARD_QWEN35 = {
+    "4b": "a1cb85ca3dd2c65ff561cc1d8fd66e6830c5ab30",
+    "9b": "f01548b009741e12ff9817ed91dba94701ed9579",
+    "27b": "3a5c836f485047a96f45754e08c981ca9e41fa60",
+}
+
+
+def hpsv3():
+    """HPSv3 checkpoint + Qwen2-VL-7B-Instruct base (HF cache, pinned; ~32 GB)."""
+    repo, revision = _HPSV3
+    print(f"  ↓ {repo}@{revision[:8]}/HPSv3.safetensors")
+    print(f"    -> {hf_hub_download(repo_id=repo, filename='HPSv3.safetensors', revision=revision)}")
+    _snap(_QWEN2VL_7B[0], revision=_QWEN2VL_7B[1])
+
+
+def _unifiedreward_qwen35(size):
+    repo = f"CodeGoat24/UnifiedReward-2.0-qwen35-{size}"
+    revision = _UNIFIEDREWARD_QWEN35[size]
+    dest = os.path.join(REWARD_CKPTS, f"UnifiedReward-2.0-qwen35-{size}")
+    _snap(repo, revision=revision, local_dir=dest)
+    # Read by the Qwen3.5 identity guards (search sidecar, checkpoint reward_meta).
+    with open(os.path.join(dest, "PINNED_REVISION"), "w") as f:
+        f.write(f"{repo}@{revision}\n")
+
+
+def unifiedreward_qwen35_4b():
+    """UnifiedReward-2.0-qwen35-4b (pinned, ~10 GB) -> reward_ckpts/UnifiedReward-2.0-qwen35-4b/."""
+    _unifiedreward_qwen35("4b")
+
+
+def unifiedreward_qwen35_9b():
+    """UnifiedReward-2.0-qwen35-9b (pinned, ~18 GB) -> reward_ckpts/UnifiedReward-2.0-qwen35-9b/."""
+    _unifiedreward_qwen35("9b")
+
+
+def unifiedreward_qwen35_27b():
+    """UnifiedReward-2.0-qwen35-27b (pinned, ~51 GB) -> reward_ckpts/UnifiedReward-2.0-qwen35-27b/."""
+    _unifiedreward_qwen35("27b")
+
+
 
 
 
@@ -149,6 +192,13 @@ MODELS = {
     "hpsv2": hpsv2,
     "aesthetic": aesthetic,
 }
+# Extension reward models: requested by name only, never by --all.
+EXTENSION_MODELS = {
+    "hpsv3": hpsv3,
+    "unifiedreward_qwen35_4b": unifiedreward_qwen35_4b,
+    "unifiedreward_qwen35_9b": unifiedreward_qwen35_9b,
+    "unifiedreward_qwen35_27b": unifiedreward_qwen35_27b,
+}
 
 
 def main():
@@ -160,7 +210,8 @@ def main():
     parser.add_argument("--list", action="store_true", help="list models and exit")
     args = parser.parse_args()
 
-    unknown = [m for m in args.models if m not in MODELS]
+    available = {**MODELS, **EXTENSION_MODELS}
+    unknown = [m for m in args.models if m not in available]
     if unknown:
         parser.error(f"unknown model(s): {', '.join(unknown)} — see --list")
 
@@ -168,6 +219,9 @@ def main():
         print(f"HF_HOME = {os.environ.get('HF_HOME', '~/.cache/huggingface (default!)')}")
         print(f"reward_ckpts -> {REWARD_CKPTS}\n\nAvailable models:")
         for name, fn in MODELS.items():
+            print(f"  {name:<26} {fn.__doc__.splitlines()[0]}")
+        print("\nExtension reward models (by name only; not included in --all):")
+        for name, fn in EXTENSION_MODELS.items():
             print(f"  {name:<26} {fn.__doc__.splitlines()[0]}")
         print("\nUsage: python scripts/download_weights.py --all   (or a list of names)")
         return
@@ -181,7 +235,7 @@ def main():
     for name in names:
         print(f"\n=== {name} ===")
         try:
-            MODELS[name]()
+            available[name]()
         except Exception as e:  # keep going; report at the end
             msg = str(e)
             if "401" in msg or "403" in msg or "gated" in msg.lower():

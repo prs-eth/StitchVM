@@ -38,6 +38,15 @@ from stitchvm.models.stitched_image_model import StitchImage2D
 from stitchvm.utils.ema import EMAState
 from stitchvm.utils.noisy_latent import make_noisy_latent
 
+# Vision-language reward models whose vision branch is stitched; their language
+# branch is never constructed during training. Their modules are imported only
+# when selected, so the other recipes do not depend on them.
+HPSV3_REWARD = "hpsv3"
+QWEN35_REWARD = "qwen35"
+# Name fragments of language-model / reward-head parameters that must never
+# enter the training graph of these heads.
+_LANGUAGE_PARAM_KEYS = ("language_model", "lm_head", "embed_tokens", "rm_head")
+
 
 def _checkpoint_dir(save_path: str, epoch_next: int) -> Path:
     return Path(save_path) / "checkpoints" / f"epoch_{epoch_next:04d}"
@@ -87,8 +96,13 @@ def save_checkpoint_end_of_epoch(
     # Stamp the architecture identity so eval can assert it matches.
     location = args.stitching_layer_location
 
+    # Qwen3.5 reward heads also record the reward checkpoint identity and recipe.
+    reward_meta = getattr(args, "reward_meta", None)
+
     model_state = _gather_model_trainables(stitched_model, accelerator)
     model_state["stitching_layer_location"] = location
+    if reward_meta is not None:
+        model_state["reward_meta"] = reward_meta
     _atomic_torch_save(model_state, ckpt_dir / "model_trainables.pt")
 
     if ema_state is not None:
@@ -97,6 +111,8 @@ def save_checkpoint_end_of_epoch(
         try:
             ema_model_state = _gather_model_trainables(stitched_model, accelerator)
             ema_model_state["stitching_layer_location"] = location
+            if reward_meta is not None:
+                ema_model_state["reward_meta"] = reward_meta
         finally:
             ema_state.restore(m, backup)
         _atomic_torch_save(ema_model_state, ckpt_dir / "model_trainables_ema.pt")
@@ -134,6 +150,12 @@ def training_one_epoch_loop_clip(
         std=clip_processor.image_std,
     )
     prompt_embeds, pooled_embeds = prompt_embedding
+    # HPSv3 / Qwen3.5 heads normalize and patchify inside the teacher wrapper.
+    # Qwen3.5: the teacher reads the VAE image at its processor size (the
+    # identity at every training bucket) and the student runs on that image's
+    # native grid.
+    qwen35_head = args.feedforward_model == QWEN35_REWARD
+    qwen_head = args.feedforward_model == HPSV3_REWARD or qwen35_head
 
     # Metrics always go to the terminal (so a run is inspectable without a
     # wandb account). The JSONL file is written only when $LOG_DIR is set;
@@ -162,22 +184,33 @@ def training_one_epoch_loop_clip(
                     distribution=args.timestep_distribution,
                 )
 
-            ff_images_clip = clip_normalize((ff_images + 1) / 2)
+            if not qwen_head:
+                ff_images_clip = clip_normalize((ff_images + 1) / 2)
 
             with accelerator.autocast():
                 # Student forward
                 B = noisy_latent.shape[0]
+                extra = {}
+                if qwen35_head:
+                    teacher_frames = (data["vae_image_tensor"].to(accelerator.device) + 1) / 2
+                    extra["target_grid"] = clip_processor.grid_hw(*teacher_frames.shape[-2:])
                 student_output = stitched_model(
                     noisy_latent=noisy_latent,
                     timestep=sigma * 1000,
                     encoder_hidden_states=prompt_embeds.expand(B, -1, -1),
                     pooled_projections=pooled_embeds.expand(B, -1),
                     train=True,
+                    **extra,
                 )
 
                 # Teacher forward on the reward-model-resolution images
                 with torch.no_grad():
-                    teacher_output = teacher_model(pixel_values=ff_images_clip)
+                    if qwen35_head:
+                        teacher_output = teacher_model(frames=teacher_frames)
+                    elif qwen_head:
+                        teacher_output = teacher_model(frames=(ff_images + 1) / 2)
+                    else:
+                        teacher_output = teacher_model(pixel_values=ff_images_clip)
 
                 loss = loss_criterion(student_output, teacher_output)
                 total_loss = loss["total_loss"]
@@ -212,15 +245,17 @@ def training_one_epoch_loop_clip(
                     ema_state.update(accelerator.unwrap_model(stitched_model))
 
             if accelerator.is_main_process and accelerator.sync_gradients:
-                log_dict = {
-                    "train/total_loss": total_loss.item(),
-                    "train/token_loss": loss["token_loss"].item(),
+                log_dict = {"train/total_loss": total_loss.item()}
+                for key in ("token_loss", "merged_token_loss"):
+                    if key in loss:
+                        log_dict[f"train/{key}"] = loss[key].item()
+                log_dict.update({
                     "train/epoch": epoch,
                     "train/step": step,
                     "train/lr": scheduler.get_last_lr()[0],
                     "train/gradnorm": gradnorm,
                     "train/sigma_mean": sigma.mean().item(),
-                }
+                })
                 if "embedding_loss" in loss:
                     log_dict["train/embedding_loss"] = loss["embedding_loss"].item()
                 if "score_loss" in loss:
@@ -400,6 +435,111 @@ def _build_hpsv2_stitched_model(args, device):
     return stitched_model, teacher, hpsv2_processor, prompt_embedding
 
 
+def _assert_no_language_params(*modules):
+    names = [
+        n for module in modules for n, _ in module.named_parameters()
+        if any(k in n for k in _LANGUAGE_PARAM_KEYS)
+    ]
+    if names:
+        raise RuntimeError(f"Language/reward-head weights in the training graph: {names[:5]}")
+
+
+def _build_hpsv3_stitched_model(args, device):
+    """HPSv3 Qwen2-VL vision branch + SD3.5 backbone.
+
+    Only the vision tower is loaded: the language branch and reward head of
+    HPSv3 are untouched by distillation (they consume the merged vision tokens
+    at evaluation time, see stitchvm/models/qwen2vl_reward.py)."""
+    from stitchvm.models.feedforward.qwen2vl_vision_head import (
+        Qwen2VLTeacherWrapper,
+        Qwen2VLVisionHead,
+    )
+    from stitchvm.utils.utils_for_thirdparty import load_hpsv3_visual
+
+    if args.diffusion_model != "sd3.5":
+        raise ValueError("--feedforward_model hpsv3 is tested with --diffusion_model sd3.5 only")
+    if args.feedforward_width % 28 or args.feedforward_height % 28:
+        raise ValueError("HPSv3 input size must be a multiple of 28 (448 in the recipe)")
+    visual, processor = load_hpsv3_visual(args, device)
+    split, _ = _split_at_stitching_layer(args.stitching_layer_location)
+    head = Qwen2VLVisionHead.from_qwen2vl_visual(
+        visual,
+        split,
+        num_patches_h=args.feedforward_height // 14,
+        num_patches_w=args.feedforward_width // 14,
+    )
+    # The reward checkpoint is bf16; keep fp32 master weights for the trainable
+    # copy (the HPSv2 / CLIP heads are fp32 too). The teacher stays bf16.
+    head.to(torch.float32)
+    stitched_model, prompt_embedding = _assemble_stitched(args, device, head, "HPSv3")
+    teacher = Qwen2VLTeacherWrapper(visual)
+    teacher.eval()
+    _assert_no_language_params(stitched_model, teacher)
+    return stitched_model, teacher, processor, prompt_embedding
+
+
+def _build_qwen35_stitched_model(args, device):
+    """UnifiedReward-2.0 Qwen3.5 vision branch (config-driven, any tested size) + SD3.5.
+
+    Only the vision tower is loaded; the language model is never constructed in
+    training. The Stage-1 initialization must come from a search on this exact
+    checkpoint (search_meta.json sidecar) and match --stitching_layer_location.
+    The reward checkpoint identity and recipe are stamped into every exported
+    checkpoint (reward_meta) so evaluation can refuse a mismatched pairing."""
+    import hashlib
+    from dataclasses import asdict
+
+    from stitchvm.models.feedforward.qwen35_vision_head import (
+        Qwen35TeacherWrapper,
+        Qwen35VisionHead,
+        check_search_sidecar,
+        load_qwen35_visual,
+    )
+
+    if not args.qwen35_checkpoint:
+        raise ValueError("--qwen35_checkpoint is required for --feedforward_model qwen35")
+    if args.diffusion_model != "sd3.5":
+        raise ValueError("--feedforward_model qwen35 is tested with --diffusion_model sd3.5 only")
+    if args.initialization_weight_path is None:
+        raise ValueError("qwen35 Stage 2 needs the Stage-1 init of this checkpoint (--initialization_weight_path)")
+    visual, policy, meta = load_qwen35_visual(args.qwen35_checkpoint, device)
+    split, dit_split = _split_at_stitching_layer(args.stitching_layer_location)
+    check_search_sidecar(args.initialization_weight_path, meta, split, dit_split)
+    head = Qwen35VisionHead.from_visual(visual, split)
+    head.to(torch.float32)
+    stitched_model, prompt_embedding = _assemble_stitched(args, device, head, "Qwen3.5")
+    teacher = Qwen35TeacherWrapper(visual, policy)
+    teacher.eval()
+    _assert_no_language_params(stitched_model, teacher)
+    with open(args.initialization_weight_path, "rb") as f:
+        init_sha = hashlib.sha256(f.read()).hexdigest()
+    args.reward_meta = {
+        **meta,
+        "stitching_layer_location": args.stitching_layer_location,
+        "stitching_layer_config": asdict(args.stitching_layer_config),
+        "initialization_weight_path": os.path.abspath(args.initialization_weight_path),
+        "initialization_sha256": init_sha,
+        "diffusion_model": args.diffusion_model,
+        "resolution_buckets": [list(b) for b in args.resolution_buckets] if args.resolution_buckets else None,
+        "fixed_resolution": [args.width, args.height],
+        "teacher_input": "VAE image at the checkpoint processor size (native grid)",
+        "loss": "merged-token MSE (merger output only, no language forward)",
+        "timestep_range": list(args.timestep_range),
+        "timestep_distribution": args.timestep_distribution,
+        "ema_decay": args.ema_decay,
+        "exclude_image_list": None,
+    }
+    if args.exclude_image_list:
+        with open(args.exclude_image_list, "rb") as f:
+            raw = f.read()
+        args.reward_meta["exclude_image_list"] = {
+            "path": os.path.abspath(args.exclude_image_list),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "n_paths": sum(1 for line in raw.decode().splitlines() if line.strip()),
+        }
+    return stitched_model, teacher, policy, prompt_embedding
+
+
 def _build_dfn_clip_stitched_model(args, device):
     """DFN5B-CLIP head + SD3/Flux backbone (open_clip ViT-H-14)."""
     from stitchvm.utils.utils_for_thirdparty import load_dfn_clip_model
@@ -517,6 +657,14 @@ def main(args: argparse.Namespace):
             loss_type=args.loss_type,
             token_weight=args.token_weight,
         )
+    elif args.feedforward_model in (HPSV3_REWARD, QWEN35_REWARD):
+        from stitchvm.losses.qwen2vl_loss import LossQwen2VLMergedTokens
+
+        build = (_build_hpsv3_stitched_model if args.feedforward_model == HPSV3_REWARD
+                 else _build_qwen35_stitched_model)
+        stitched_model, feed_forward_model, clip_processor, prompt_embedding = build(args, device)
+        loss_criterion = LossQwen2VLMergedTokens()
+        logger.info(f"{args.feedforward_model}: post-merger image-token MSE (no language forward)")
     elif args.feedforward_model == "dfn_clip":
         stitched_model, feed_forward_model, clip_processor, prompt_embedding = (
             _build_dfn_clip_stitched_model(args, device)

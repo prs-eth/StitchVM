@@ -92,6 +92,7 @@ class StitchImage2D(nn.Module):
         encoder_hidden_states=None,
         pooled_projections=None,
         train=False,
+        target_grid=None,
     ):
         """
         Args:
@@ -103,6 +104,10 @@ class StitchImage2D(nn.Module):
             train: if True, return the (image_embeds, hidden_states) tuple the
                 distillation losses consume (hidden_states: (B, 1+N, D) incl.
                 CLS, pre-post_layernorm); else return (B, D) pooled embedding.
+            target_grid: optional (h, w) head patch grid overriding the head's
+                default, for heads that take variable-size grids (the Qwen2-VL /
+                Qwen3.5 vision heads, whose language branch expects the native
+                grid of each image).
 
         Returns:
             (image_embeds, hidden_states) when train=True,
@@ -129,7 +134,10 @@ class StitchImage2D(nn.Module):
         # (a downsample at the evaluation resolutions: DiT grids are larger than
         # the 16/24/27-token head grids). Match features dtype to the stitching
         # layer's weight dtype.
-        target = (self.clip_patches_h, self.clip_patches_w)
+        if target_grid is None:
+            target = (self.clip_patches_h, self.clip_patches_w)
+        else:
+            target = tuple(target_grid)
         stitching_dtype = next(self.stitching_layer.parameters()).dtype
         stitched = self.stitching_layer(features.to(stitching_dtype))
         stitched = F.interpolate(

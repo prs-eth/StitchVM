@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hpsv3-vendored-subset"
+version = "0.0.0"
+description = "Vendored subset of HPSv3 (input processing + prompt text) used by StitchVM"
+license = {text = "MIT"}
+
+[tool.setuptools.packages.find]
+include = ["hpsv3*"]
+namespaces = true

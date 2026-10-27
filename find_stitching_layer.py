@@ -6,7 +6,7 @@ split. Candidates are the first four reward-encoder blocks and the first
 half of DiT blocks. Measured layer selections and their search scope
 are listed in README.md.
 
-  feedforward_model :  clip | dfn_clip | aesthetic | hpsv2
+  feedforward_model :  clip | dfn_clip | aesthetic | hpsv2 | hpsv3 | qwen35
   diffusion_model   :  sd3.5 | sd3.5_large | flux_dev
 
 The multi-resolution search invocations live in
@@ -14,8 +14,18 @@ The multi-resolution search invocations live in
 
 ``aesthetic`` reuses the CLIP feature path (the aesthetic predictor is a
 small MLP on top of CLIP ViT-L/14). This search needs only the vision encoder.
+
+``hpsv3`` hooks the Qwen2-VL vision tower of HPSv3; block outputs are converted
+back from Qwen2-VL's 2x2 merge-window token order to spatial maps.
+``qwen35`` hooks the vision tower of a UnifiedReward-2.0 Qwen3.5 checkpoint
+(--qwen35_checkpoint) the same way. Its input is the VAE image itself at the
+size the checkpoint's own processor gives it (the identity at every training
+bucket), so the head grid equals the SD3.5 DiT token grid. A search_meta.json
+sidecar records which checkpoint the fits belong to; Stage 2 refuses an
+initialization fitted for another checkpoint.
 """
 
+import json
 import os
 
 import torch
@@ -57,17 +67,24 @@ class _Head:
     """
 
     def __init__(self, kind: str, model, processor):
-        self.kind = kind  # "clip" | "hpsv2" | "dfn_clip"
+        self.kind = kind  # "clip" | "hpsv2" | "dfn_clip" | "qwen2vl" | "qwen35"
         self.model = model
+        self.processor = processor
         # Only prefix features are consumed. Later blocks cannot affect them,
         # so omit those blocks from the forward pass as well as from the grid.
         if kind == "clip":
             encoder = model.vision_model.encoder
             encoder.layers = encoder.layers[:NUM_HEAD_BLOCKS]
+        elif kind in ("qwen2vl", "qwen35"):
+            model.blocks = model.blocks[:NUM_HEAD_BLOCKS]
         else:
             transformer = model.visual.transformer
             transformer.resblocks = transformer.resblocks[:NUM_HEAD_BLOCKS]
         self._normalize = T.Normalize(mean=processor.image_mean, std=processor.image_std)
+        # Qwen heads: the current batch's (B, t, h, w) for the feature hooks.
+        self.grid = {}
+        # Qwen3.5 reads the VAE image (processor-resized); every other head its own input.
+        self.input_key = "vae_image_tensor" if kind == "qwen35" else "feedforward_image_tensor"
 
     def register_hooks(self, feature_store):
         if self.kind == "clip":
@@ -87,10 +104,34 @@ class _Head:
             return register_dfn_clip_feature_hooks(
                 self.model, feature_store=feature_store, num_blocks=NUM_HEAD_BLOCKS
             )
+        if self.kind in ("qwen2vl", "qwen35"):
+            from stitchvm.models.feedforward.qwen2vl_vision_head import (
+                register_qwen2vl_feature_hooks,
+            )
+            return register_qwen2vl_feature_hooks(
+                self.model, feature_store=feature_store, grid=self.grid,
+                num_blocks=NUM_HEAD_BLOCKS,
+            )
         raise ValueError(f"unknown head kind: {self.kind}")
 
     def forward(self, ff_images_unit):
         """Run the head forward with images in [0, 1] (hooks capture features)."""
+        if self.kind in ("qwen2vl", "qwen35"):
+            B, _, H, W = ff_images_unit.shape
+            if self.kind == "qwen2vl":
+                from stitchvm.models.feedforward.qwen2vl_vision_head import qwen2vl_patchify
+
+                h, w = H // 14, W // 14
+                pixel_values, grid_thw = qwen2vl_patchify(ff_images_unit.float())
+            else:
+                from stitchvm.models.feedforward.qwen35_vision_head import qwen35_prepare
+
+                h, w = self.processor.grid_hw(H, W)
+                pixel_values, grid_thw = qwen35_prepare(ff_images_unit, self.processor)
+            self.grid.update(B=B, t=1, h=h, w=w)
+            dtype = self.model.patch_embed.proj.weight.dtype
+            self.model(pixel_values.to(dtype), grid_thw=grid_thw)
+            return
         normed = self._normalize(ff_images_unit)
         if self.kind == "clip":
             self.model(pixel_values=normed)
@@ -225,7 +266,7 @@ def extract_features(
                 break
 
             images = data["vae_image_tensor"].to(vae.device)
-            ff_images = data["feedforward_image_tensor"].to(vae.device)
+            ff_images = data[head.input_key].to(vae.device)
 
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 # ── VAE encode (dataloaders emit [-1, 1] already) ──
@@ -310,6 +351,14 @@ def _load_dit_and_embeddings(args, device, is_flux):
 def _build_head(args, device) -> _Head:
     """Build the head specified by ``args.feedforward_model``."""
     ff = args.feedforward_model
+    if ff == "qwen35":
+        from stitchvm.models.feedforward.qwen35_vision_head import load_qwen35_visual
+        model, policy, _meta = load_qwen35_visual(args.qwen35_checkpoint, device)
+        return _Head("qwen35", model, policy)
+    if ff == "hpsv3":
+        from stitchvm.utils.utils_for_thirdparty import load_hpsv3_visual
+        model, processor = load_hpsv3_visual(args, device)
+        return _Head("qwen2vl", model, processor)
     if ff == "dfn_clip":
         from stitchvm.utils.utils_for_thirdparty import load_dfn_clip_model
         model, processor = load_dfn_clip_model(args, device)
@@ -330,7 +379,7 @@ def _build_head(args, device) -> _Head:
         return _Head("clip", model, processor)
     raise ValueError(
         f"Unsupported feedforward_model: {ff}. "
-        "Supported: clip, dfn_clip, aesthetic, hpsv2."
+        "Supported: clip, dfn_clip, aesthetic, hpsv2, hpsv3, qwen35."
     )
 
 
@@ -338,6 +387,57 @@ def _diffusion_tag(args) -> str:
     return {"flux_dev": "flux_dev", "sd3.5_large": "sd3_large"}.get(
         args.diffusion_model, "sd3"
     )
+
+
+def _qwen35_search_sidecar(args) -> str:
+    """Write (or check) feature_save_path/search_meta.json: the checkpoint identity and search
+    protocol the cached features and fitted layers belong to. Returns the feature-file tag."""
+    from stitchvm.models.feedforward.qwen35_vision_head import (
+        Qwen35ProcessorPolicy,
+        assert_same_reward_checkpoint,
+        checkpoint_identity,
+        require_identity,
+    )
+
+    if not args.qwen35_checkpoint:
+        raise ValueError("--qwen35_checkpoint is required for --feedforward_model qwen35")
+    if args.diffusion_model != "sd3.5":
+        raise ValueError("--feedforward_model qwen35 is tested with --diffusion_model sd3.5 only")
+    ident = checkpoint_identity(args.qwen35_checkpoint)
+    require_identity(ident, args.qwen35_checkpoint)
+    ident["processor_policy"] = Qwen35ProcessorPolicy.from_checkpoint(args.qwen35_checkpoint).__dict__
+    with open(os.path.join(args.qwen35_checkpoint, "config.json")) as f:
+        ident["vision_config"] = json.load(f)["vision_config"]
+    protocol = {
+        "diffusion_model": args.diffusion_model, "resolution_buckets": args.resolution_buckets,
+        "width": args.width, "height": args.height, "datasets": [f"{n}:{r}" for n, r in args.dataset],
+        "samples": args.iterations_for_feature_extraction * args.batch_size, "val_ratio": args.val_ratio,
+        "dit_search_fraction": DIT_SEARCH_FRACTION, "num_head_blocks": NUM_HEAD_BLOCKS,
+        "timestep_range": list(args.timestep_range), "stitching_layer_config": str(args.stitching_layer_config),
+        "head_input": "vae_image_tensor at the checkpoint processor size",
+    }
+    protocol = json.loads(json.dumps(protocol, default=str))  # as stored in the sidecar
+    path = os.path.join(args.feature_save_path, "search_meta.json")
+    if os.path.exists(path):
+        # Cached features and fitted layers in this directory belong to the recorded checkpoint
+        # (revision, config and processor hashes) and search protocol; refuse any difference.
+        with open(path) as f:
+            old = json.load(f)
+        assert_same_reward_checkpoint(old["reward_model"], ident,
+                                      f"{path} (use a fresh --feature_save_path)")
+        # Dataset roots are locations, not content: a relocated dataset with the same names is accepted.
+        recorded = dict(old.get("protocol") or {})
+        current = dict(protocol)
+        for p in (recorded, current):
+            p["datasets"] = [d.split(":", 1)[0] for d in p.get("datasets") or []]
+        changed = sorted(k for k in set(recorded) | set(current) if recorded.get(k) != current.get(k))
+        if changed:
+            raise ValueError(f"{path} was written by a search with a different protocol ({changed}); "
+                             "use a fresh --feature_save_path")
+    else:
+        with open(path, "w") as f:
+            json.dump({"reward_model": ident, "protocol": protocol}, f, indent=1, default=str)
+    return f"qwen35-{ident['config.json_sha256'][:12]}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -353,6 +453,8 @@ def main(args):
 
     ts_low, ts_high = args.timestep_range
     ff_tag = args.feedforward_model
+    if ff_tag == "qwen35":
+        ff_tag = _qwen35_search_sidecar(args)
     diff_tag = _diffusion_tag(args)
     tag = f"{ff_tag}_{diff_tag}_dit_t{ts_low:.2f}_{ts_high:.2f}"
     feature_file = os.path.join(args.feature_save_path, f"features_{tag}.pt")

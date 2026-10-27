@@ -1,0 +1,6 @@
+# Optional: inference and evaluation of the HPSv3 and UnifiedReward-2.0 Qwen3.5 extensions
+# (and the near-duplicate preparation, which reads the benchmark parquet).
+# Search and distillation need only requirements.txt. Install from the repository root.
+pandas==2.2.3   # ImageReward preparation; imported by the vendored HPSv3 prompt module
+pyarrow==19.0.1 # VL-RewardBench and ImageReward parquet files
+-e ./external_repos/HPSv3  # vendored HPSv3 input processing (no dependencies)

@@ -1,7 +1,8 @@
 # Stage 1 — Stitching-layer search
 
 [README](../README.md) · [Shared setup](SETUP.md) ·
-[Stage 2 — Value-model distillation](STAGE2_VALUE_MODEL_DISTILLATION.md)
+[Stage 2 — Value-model distillation](STAGE2_VALUE_MODEL_DISTILLATION.md) ·
+Model guides: [HPSv3](EXTENSION_HPSV3.md) · [UnifiedReward-2.0 Qwen3.5](EXTENSION_UNIFIEDREWARD_QWEN35.md)
 
 On this page: [Setup](#setup) · [How to run](#how-to-run) ·
 [Configuration](#search-configuration) · [Results](#results) ·

@@ -29,6 +29,13 @@ def _get_flux_model_id(args):
     raise NotImplementedError(f"Flux diffusion model {dm} is not implemented.")
 
 
+def _sd3_revision_kwargs(args) -> dict:
+    """``revision=`` for the SD3 loaders, only when ``args.diffusion_revision`` is set (the extension
+    inference builders pin it); otherwise no extra argument, exactly as before."""
+    revision = getattr(args, "diffusion_revision", None)
+    return {"revision": revision} if revision else {}
+
+
 def _maybe_slice_vae(vae) -> None:
     """Encode samples individually to reduce memory when STITCHVM_VAE_SLICING=1."""
     if os.environ.get("STITCHVM_VAE_SLICING", "0").strip().lower() in ("1", "true", "yes", "on"):
@@ -45,7 +52,7 @@ def load_sd3_dit(args: argparse.Namespace, device: torch.device):
     logger.info(f"Loading SD3 DiT from {model_id} with device {device}")
     dit = SD3Transformer2DModel.from_pretrained(
         model_id, subfolder="transformer", torch_dtype=torch.bfloat16,
-        local_files_only=_hf_offline(),
+        local_files_only=_hf_offline(), **_sd3_revision_kwargs(args),
     )
     dit.to(device)
     dit.eval()
@@ -70,7 +77,7 @@ def load_sd3_prompt_embedding(
     logger.info(f"Loading SD3 text encoders from {model_id} for prompt embedding")
     pipe = StableDiffusion3Pipeline.from_pretrained(
         model_id, transformer=None, vae=None, torch_dtype=torch.bfloat16,
-        local_files_only=_hf_offline(),
+        local_files_only=_hf_offline(), **_sd3_revision_kwargs(args),
     )
     # Move only text encoders to device
     if pipe.text_encoder is not None:
@@ -106,7 +113,7 @@ def load_sd3_vae(args: argparse.Namespace, device: torch.device):
     logger.info(f"Loading SD3 VAE from {model_id} with device {device}")
     vae = AutoencoderKL.from_pretrained(
         model_id, subfolder="vae", torch_dtype=torch.float32,
-        local_files_only=_hf_offline(),
+        local_files_only=_hf_offline(), **_sd3_revision_kwargs(args),
     )
     vae.to(device)
     _maybe_slice_vae(vae)
@@ -321,3 +328,44 @@ def load_dfn_clip_model(args: argparse.Namespace, device: torch.device):
         "DFN CLIP loaded (ViT-H-14, 32 blocks, hidden=1280, proj=1024)"
     )
     return model, DFNClipProcessor()
+
+
+def load_hpsv3_visual(args: argparse.Namespace, device: torch.device):
+    """Load only the Qwen2-VL vision tower of HPSv3.
+
+    Search and distillation never run the language branch, so only the
+    `visual.*` weights of the reward checkpoint are materialized, on top of
+    the vision config of the Qwen2-VL-7B-Instruct base model. The full reward
+    model, language branch included, is loaded by
+    stitchvm.models.qwen2vl_reward for evaluation.
+
+    Returns:
+        (Qwen2VisionTransformerPretrainedModel in bf16, Qwen2VLProcessorStats)
+    """
+    import safetensors
+    from transformers import AutoConfig
+    from transformers.models.qwen2_vl.modeling_qwen2_vl import (
+        Qwen2VisionTransformerPretrainedModel,
+    )
+
+    from stitchvm.models.feedforward.qwen2vl_vision_head import Qwen2VLProcessorStats
+    from stitchvm.models import qwen2vl_reward as R
+
+    path = getattr(args, "hpsv3_checkpoint", None) or R.hpsv3_checkpoint_file()
+    sd = {}
+    with safetensors.safe_open(path, framework="pt", device="cpu") as f:
+        for k in f.keys():
+            if k.startswith("visual."):
+                sd[k[len("visual."):]] = f.get_tensor(k)
+
+    config = AutoConfig.from_pretrained(
+        R.HPSV3_BASE_MODEL, revision=R.HPSV3_BASE_REVISION, local_files_only=_hf_offline()
+    )
+    vcfg = config.vision_config
+    vcfg._attn_implementation = "sdpa"
+    visual = Qwen2VisionTransformerPretrainedModel._from_config(vcfg, torch_dtype=torch.bfloat16)
+    visual.load_state_dict(sd, strict=True)
+    visual.to(device)
+    visual.eval()
+    logger.info(f"Loaded HPSv3 vision tower ({len(sd)} tensors) from {path}")
+    return visual, Qwen2VLProcessorStats()

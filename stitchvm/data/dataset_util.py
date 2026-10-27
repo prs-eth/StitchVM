@@ -47,6 +47,28 @@ def _build_single_stitching_dataset(
         raise ValueError(f"Unknown dataset name: {name}")
 
 
+def _exclude_images(ds_objects, datasets, exclude_file: str):
+    """Drop listed images from the image datasets (e.g. near-duplicates of benchmark
+    test images). Each line is a path relative to a dataset root, or absolute."""
+    with open(exclude_file) as f:
+        listed = [line.strip() for line in f if line.strip()]
+    for ds, (_name, root) in zip(ds_objects, datasets):
+        attr = "image_paths" if hasattr(ds, "image_paths") else "samples" if hasattr(ds, "samples") else None
+        if attr is None:
+            raise ValueError(f"--exclude_image_list is not supported for {type(ds).__name__}")
+        root = os.path.abspath(root)
+        excluded = {
+            os.path.normpath(p if os.path.isabs(p) else os.path.join(root, p)) for p in listed
+        }
+        paths = getattr(ds, attr)
+        kept = [p for p in paths if os.path.normpath(os.path.abspath(p)) not in excluded]
+        setattr(ds, attr, kept)
+        logger.info(
+            f"  {type(ds).__name__}: excluded {len(paths) - len(kept)} of {len(paths)} "
+            f"images listed in {exclude_file}"
+        )
+
+
 def create_stitching_dataloader(
     datasets: list[tuple[str, str]],  # <── list of (name, root) pairs
     args: argparse.Namespace,
@@ -77,6 +99,10 @@ def create_stitching_dataloader(
         )
         for n, r in datasets
     ]
+
+    exclude_file = getattr(args, "exclude_image_list", None)
+    if exclude_file:
+        _exclude_images(ds_objects, datasets, exclude_file)
 
     buckets = getattr(args, "resolution_buckets", None)
     if buckets:

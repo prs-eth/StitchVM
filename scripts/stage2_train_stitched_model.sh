@@ -12,6 +12,10 @@ run_training() {
   configure_training_recipe "$backbone" "$reward"
   local command=("${LAUNCH[@]}" --diffusion_model "$backbone"
                  --feedforward_model "$reward" "${TRAINING_ARGS[@]}" "$@")
+  # Bash 3.2 treats an empty array as unset under nounset.
+  if [[ -n "${TRAIN_ENV[*]-}" ]]; then
+    command=("${TRAIN_ENV[@]}" "${command[@]}")
+  fi
   printf '%s: LR=%s; global batch=%s (%s processes × %s images/device × %s accumulation)\n' \
     "$recipe" "$TRAIN_LEARNING_RATE" "$TRAIN_GLOBAL_BATCH" "$NPROC" "$TRAIN_MICRO_BATCH" "$TRAIN_GA"
   if [[ "$DRY_RUN" == 1 ]]; then
@@ -142,14 +146,51 @@ stage2_flux_dfn_clip() {
     --save_path "$OUT/stitchvm_dfn_clip_flux"
 }
 
+# --- Extensions: vision-language reward models x SD3.5 Medium -----------------
+# docs/EXTENSION_HPSV3.md and docs/EXTENSION_UNIFIEDREWARD_QWEN35.md. Only the
+# vision branch is distilled (post-merger image-token MSE); the language branch
+# is never constructed during training.
+
+stage2_hpsv3() {
+  run_training sd3.5 hpsv3 \
+    --feedforward_width 448 --feedforward_height 448 \
+    --stitching_layer_config conv2d_k1x1_o1280_s1x1_p0x0 \
+    --stitching_layer_location enc_blocks_2_dit_5 \
+    --initialization_weight_path "$INIT/hpsv3_sd3.5_dit_multires/state_dict_dit_blocks_5_enc_blocks_2_post.pt" \
+    --save_path "$OUT/stitchvm_hpsv3_sd3"
+}
+
+# UnifiedReward-2.0 Qwen3.5: the teacher reads the VAE image at its processor
+# size (--feedforward_width/height are not used by this head). Stage 2 drops
+# 30 HPDv2 near-duplicates of VL-RewardBench test images.
+run_unifiedreward_qwen35() {
+  local size=$1 hidden=$2 enc=$3 dit=$4
+  run_training sd3.5 qwen35 \
+    --qwen35_checkpoint "$STITCHVM_REWARD_CKPTS/UnifiedReward-2.0-qwen35-$size" \
+    --feedforward_width 512 --feedforward_height 512 \
+    --stitching_layer_config "conv2d_k1x1_o${hidden}_s1x1_p0x0" \
+    --stitching_layer_location "enc_blocks_${enc}_dit_${dit}" \
+    --initialization_weight_path "$INIT/unifiedreward_qwen35_${size}_sd3.5_dit_multires/state_dict_dit_blocks_${dit}_enc_blocks_${enc}_post.pt" \
+    --exclude_image_list data_processing/vlrb_hpdv2_near_duplicates.txt \
+    --save_path "$OUT/stitchvm_unifiedreward_qwen35_${size}_sd3"
+}
+
+stage2_unifiedreward_qwen35_4b() { run_unifiedreward_qwen35 4b 1024 2 4; }
+stage2_unifiedreward_qwen35_9b() { run_unifiedreward_qwen35 9b 1152 2 3; }
+stage2_unifiedreward_qwen35_27b() { run_unifiedreward_qwen35 27b 1152 2 3; }
+
 RECIPES=(stage2_hpsv2 stage2_clip stage2_aesthetic stage2_dfn_clip stage2_large_hpsv2 stage2_large_clip stage2_large_aesthetic stage2_large_dfn_clip stage2_flux_hpsv2 stage2_flux_clip stage2_flux_aesthetic stage2_flux_dfn_clip)
+EXTENSION_RECIPES=(stage2_hpsv3 stage2_unifiedreward_qwen35_4b stage2_unifiedreward_qwen35_9b stage2_unifiedreward_qwen35_27b)
 if [[ $# -eq 0 ]]; then
   echo "Usage: bash scripts/stage2_train_stitched_model.sh <recipe> [recipe ...]"
   echo "Set DRY_RUN=1 to print resolved settings and commands without training."
   echo "Optional: NPROC, MICRO_BATCH_SIZE, GLOBAL_BATCH_SIZE (accumulation is derived)."
   printf "  %s\n" "${RECIPES[@]}"
+  echo "Extensions (vision-language reward models x SD3.5 Medium):"
+  printf "  %s\n" "${EXTENSION_RECIPES[@]}"
   exit 0
 fi
+RECIPES+=("${EXTENSION_RECIPES[@]}")
 
 DRY_RUN=${DRY_RUN:-0}
 if [[ "$DRY_RUN" != 0 && "$DRY_RUN" != 1 ]]; then

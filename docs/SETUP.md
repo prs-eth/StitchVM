@@ -1,7 +1,8 @@
 # Shared setup
 
 [README](../README.md) · [Stage 1 — Stitching-layer search](STAGE1_STITCHING_LAYER_SEARCH.md) ·
-[Stage 2 — Value-model distillation](STAGE2_VALUE_MODEL_DISTILLATION.md)
+[Stage 2 — Value-model distillation](STAGE2_VALUE_MODEL_DISTILLATION.md) ·
+Model guides: [HPSv3](EXTENSION_HPSV3.md), [UnifiedReward-2.0 Qwen3.5](EXTENSION_UNIFIEDREWARD_QWEN35.md)
 
 This guide prepares the environment, pretrained dependencies, and images used
 by both workflows. Run all commands from the repository root.
@@ -9,9 +10,13 @@ by both workflows. Run all commands from the repository root.
 The repository's training recipe differs from the paper: multi-resolution
 training was introduced to improve support across image resolutions. The
 workflow guides document the current executable configuration.
-**StitchVM checkpoints have not been released.** Generate the stitching
-initializations locally before training; downloads below provide upstream
-pretrained dependencies.
+Pretrained EMA checkpoints of the twelve original backbone–reward pairs are
+[published](../README.md#pretrained-checkpoints), along with
+[HPSv3 and UnifiedReward-2.0 Qwen3.5 checkpoints](../README.md#vision-language-reward-models).
+For image scoring, follow the [inference examples](../examples/README.md).
+To train, generate the stitching
+initializations locally; downloads below provide upstream pretrained
+dependencies.
 
 ## Install
 
@@ -81,6 +86,10 @@ python scripts/download_weights.py hpsv2 clip dfn_clip aesthetic
 | Aesthetic encoder | `openai/clip-vit-large-patch14` | Input 224²; patch grid 16×16; hidden 1024; embedding 768 |
 | DFN-CLIP | `hf-hub:apple/DFN5B-CLIP-ViT-H-14-378` | Input 378²; patch grid 27×27; hidden 1280; embedding 1024 |
 
+The vision-language reward models (`hpsv3`, `unifiedreward_qwen35_{4b,9b,27b}`) are
+downloaded by name only, not by `--all`, at pinned revisions; their guides list
+the additional evaluation dependencies.
+
 The `clip` download includes both 224px and 336px encoders. HPSv2 additionally
 uses two files under the reward-checkpoint directory:
 
@@ -97,9 +106,11 @@ and tokenizers are needed to compute empty-prompt conditioning even though
 image captions are not used.
 
 Set `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` only after all needed model and
-tokenizer files are cached. Model IDs and metadata downloads do not pin immutable
-revisions. For reproducible local runs, retain the source revision, installed
-package versions, pretrained revisions, and dataset inventories with your run.
+tokenizer files are cached. The original twelve recipes load the upstream models'
+default revisions. HPSv3 and UnifiedReward use pinned reward-model revisions;
+their inference loaders also pin SD3.5 Medium, as documented in the model guides.
+For reproducible local runs, retain the source revision, installed package
+versions, pretrained revisions, and dataset inventories with your run.
 
 ## Prepare HPDv2 and AVA
 
